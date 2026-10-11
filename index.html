@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>مهامي — نهار وليل</title>
+<meta name="theme-color" content="#23204A">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="مهامي">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root{
     --bg: #FBF7F0;
@@ -376,6 +383,44 @@
   }
   .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
 
+  /* ---- TV / remote friendly ---- */
+  button:focus, input:focus{
+    outline: 4px solid #2F80ED;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 7px rgba(255,255,255,0.85);
+  }
+  .task-check{ width: 28px; height: 28px; }
+  .task-check svg{ width:16px; height:16px; }
+  .task-text{ font-size: 15.5px; min-height: 36px; }
+  .task-del{ opacity: 0.55; font-size: 16px; }
+  .add-task-row input{ min-height: 42px; font-size: 15px; }
+  .add-task-row button{ min-height: 42px; }
+  .icon-btn{ min-height: 38px; min-width: 38px; }
+  .user-name{ min-height: 38px; }
+  button{ min-height: 40px; }
+
+  .modal-overlay{
+    position: fixed; inset:0; background: rgba(20,16,36,0.65);
+    display:flex; align-items:center; justify-content:center;
+    z-index: 2000; padding: 16px;
+  }
+  .modal-box{
+    background:#fff; color: var(--ink); border-radius: 18px;
+    padding: 24px; width: 460px; max-width: 100%;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+  }
+  .modal-box h2{ margin:0 0 14px; font-size: 19px; }
+  .modal-box p{ margin: 0 0 16px; font-size: 15.5px; line-height: 1.7; }
+  .modal-box input{
+    width:100%; font-size: 17px; padding: 12px 14px; border-radius: 12px;
+    border: 2px solid var(--border); font-family: inherit; margin-bottom: 16px;
+    background:#fff; color: var(--ink);
+  }
+  .modal-actions{ display:flex; gap:10px; justify-content:flex-start; }
+  .modal-actions .ok{ background: var(--day-accent); color:#3a2400; box-shadow: 0 3px 0 var(--day-deep); }
+  .modal-actions .no{ background:#EEE8DB; color: var(--ink); }
+  .modal-actions .danger{ background: var(--danger); color:#fff; }
+
   @media (max-width: 640px){
     header.topbar{ padding: 16px; }
     main{ padding: 16px; gap: 16px; }
@@ -461,10 +506,80 @@
   /* celebration tracking so we don't re-fire repeatedly */
   var celebratedFlags = {}; // key: userId+period -> true
 
+  /* ---------- in-page dialogs (بديل prompt/confirm للتلفزيون) ---------- */
+  var activeModal = null;
+  var lastFocusBeforeModal = null;
+
+  function closeModal(){
+    if(!activeModal) return;
+    activeModal.remove();
+    activeModal = null;
+    if(lastFocusBeforeModal && document.body.contains(lastFocusBeforeModal)){
+      lastFocusBeforeModal.focus();
+    }
+  }
+
+  function openModal(title, message, withInput, defaultValue, okLabel, okClass, onOk){
+    closeModal();
+    lastFocusBeforeModal = document.activeElement;
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    var box = document.createElement("div");
+    box.className = "modal-box";
+    box.setAttribute("role","dialog");
+    var h = document.createElement("h2"); h.textContent = title; box.appendChild(h);
+    var input = null;
+    if(message){ var p = document.createElement("p"); p.textContent = message; box.appendChild(p); }
+    if(withInput){
+      input = document.createElement("input");
+      input.type = "text";
+      input.value = defaultValue || "";
+      box.appendChild(input);
+    }
+    var actions = document.createElement("div");
+    actions.className = "modal-actions";
+    var ok = document.createElement("button"); ok.className = "ok " + (okClass||""); ok.textContent = okLabel;
+    var no = document.createElement("button"); no.className = "no"; no.textContent = "إلغاء";
+    function doOk(){ var v = input ? input.value : null; closeModal(); onOk(v); }
+    ok.onclick = doOk;
+    no.onclick = closeModal;
+    if(input) input.addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); doOk(); } });
+    actions.appendChild(ok); actions.appendChild(no);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    activeModal = overlay;
+    (input || ok).focus();
+  }
+
+  function askText(title, placeholder, def, cb){
+    openModal(title, "", true, def, "حفظ", "", cb);
+    var inp = activeModal.querySelector("input");
+    inp.placeholder = placeholder;
+  }
+  function askConfirm(message, okLabel, cb){
+    openModal("تأكيد", message, false, "", okLabel, "danger", cb);
+  }
+
   /* ---------- rendering ---------- */
   var usersWrap = document.getElementById("usersWrap");
 
   function render(){
+    var focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fk : null;
+    var scrollY = window.scrollY;
+    renderInner();
+    window.scrollTo(0, scrollY);
+    if(focusKey){
+      var el = document.querySelector('[data-fk="' + focusKey + '"]');
+      if(!el){
+        var parts = focusKey.split(":");
+        el = document.querySelector('[data-fk="add:' + parts[1] + ":" + parts[2] + '"]');
+      }
+      if(el) el.focus({preventScroll:true});
+    }
+  }
+
+  function renderInner(){
     usersWrap.innerHTML = "";
 
     if(state.users.length === 0){
@@ -473,6 +588,7 @@
       empty.innerHTML = "لسه معملتش أي مستخدم.<br>ضيف أول واحد وابدأ تنظّم يومه.";
       var btn = document.createElement("button");
       btn.textContent = "+ إضافة مستخدم";
+      btn.dataset.fk = "empty:add";
       btn.onclick = handleAddUser;
       empty.appendChild(btn);
       usersWrap.appendChild(empty);
@@ -497,6 +613,7 @@
     nameInput.className = "user-name";
     nameInput.value = user.name;
     nameInput.setAttribute("aria-label", "اسم المستخدم");
+    nameInput.dataset.fk = "name:" + user.id;
     nameInput.addEventListener("change", function(){
       user.name = nameInput.value.trim() || "بدون اسم";
       saveData();
@@ -506,13 +623,17 @@
     delBtn.className = "icon-btn";
     delBtn.setAttribute("aria-label", "حذف المستخدم");
     delBtn.textContent = "✕";
+    delBtn.dataset.fk = "deluser:" + user.id;
     delBtn.onclick = function(){
-      if(confirm("متأكد إنك عايز تمسح \"" + user.name + "\" وكل مهامه؟")){
+      askConfirm("متأكدة إنك عايزة تمسحي \"" + user.name + "\" وكل مهامه؟", "نعم، امسحي", function(){
         state.users = state.users.filter(function(u){ return u.id !== user.id; });
         delete state.tasks[user.id];
         saveData();
+        lastFocusBeforeModal = null;
         render();
-      }
+        var first = document.querySelector("button, input");
+        if(first) first.focus();
+      });
     };
 
     head.appendChild(nameInput);
@@ -595,9 +716,11 @@
     input.type = "text";
     input.placeholder = isDay ? "أضف مهمة نهارية..." : "أضف مهمة ليلية...";
     input.setAttribute("aria-label", isDay ? "أضف مهمة نهارية" : "أضف مهمة ليلية");
+    input.dataset.fk = "add:" + user.id + ":" + period;
 
     var addBtn = document.createElement("button");
     addBtn.textContent = "إضافة";
+    addBtn.dataset.fk = "addbtn:" + user.id + ":" + period;
 
     function submitTask(){
       var val = input.value.trim();
@@ -627,6 +750,7 @@
     check.className = "task-check" + (task.done ? " checked" : "");
     check.setAttribute("aria-label", task.done ? "إلغاء تحديد المهمة" : "تحديد المهمة كمنجزة");
     check.innerHTML = '<svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.2 12L13 4" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    check.dataset.fk = "chk:" + user.id + ":" + period + ":" + task.id;
     check.onclick = function(){
       task.done = !task.done;
       saveData();
@@ -640,6 +764,7 @@
     text.type = "text";
     text.className = "task-text";
     text.value = task.text;
+    text.dataset.fk = "txt:" + user.id + ":" + period + ":" + task.id;
     text.addEventListener("change", function(){
       task.text = text.value.trim() || task.text;
       saveData();
@@ -649,6 +774,7 @@
     del.className = "task-del";
     del.setAttribute("aria-label", "حذف المهمة");
     del.textContent = "🗑";
+    del.dataset.fk = "del:" + user.id + ":" + period + ":" + task.id;
     del.onclick = function(){
       var arr = state.tasks[user.id][period];
       state.tasks[user.id][period] = arr.filter(function(t){ return t.id !== task.id; });
@@ -664,29 +790,32 @@
 
   /* ---------- actions ---------- */
   function handleAddUser(){
-    var name = prompt("اسم المستخدم الجديد:");
-    if(name === null) return;
-    name = name.trim();
-    if(!name) name = "مستخدم جديد";
-    var user = { id: uid("u"), name: name };
-    state.users.push(user);
-    ensureUserTasks(user.id);
-    saveData();
-    render();
+    askText("اسم المستخدم الجديد", "اكتبي الاسم هنا", "", function(name){
+      name = (name || "").trim() || "مستخدم جديد";
+      var user = { id: uid("u"), name: name };
+      state.users.push(user);
+      ensureUserTasks(user.id);
+      saveData();
+      lastFocusBeforeModal = null;
+      render();
+      var inp = document.querySelector('[data-fk="add:' + user.id + ':day"]');
+      if(inp) inp.focus();
+    });
   }
 
   function handleNewDay(){
     if(state.users.length === 0) return;
-    if(!confirm("هيتم مسح كل العلامات (التيكات) وإعادة الترتيب للبدء من جديد. المهام نفسها هتفضل موجودة. متأكد؟")) return;
-    Object.keys(state.tasks).forEach(function(userId){
-      ["day","night"].forEach(function(period){
-        state.tasks[userId][period].forEach(function(t){ t.done = false; });
+    askConfirm("هيتم مسح كل العلامات (التيكات) للبدء من جديد. المهام نفسها هتفضل موجودة.", "ابدأ يوم جديد", function(){
+      Object.keys(state.tasks).forEach(function(userId){
+        ["day","night"].forEach(function(period){
+          state.tasks[userId][period].forEach(function(t){ t.done = false; });
+        });
       });
+      celebratedFlags = {};
+      saveData();
+      render();
+      showToast("يوم جديد بدأ! يلا نخلّص المهام 💪");
     });
-    celebratedFlags = {};
-    saveData();
-    render();
-    showToast("يوم جديد بدأ! يلا نخلّص المهام 💪");
   }
 
   document.getElementById("addUserBtn").onclick = handleAddUser;
@@ -785,8 +914,68 @@
     }, 3200);
   }
 
+  /* ---------- remote / keyboard navigation ---------- */
+  function focusables(){
+    var root = activeModal || document;
+    var list = Array.prototype.slice.call(root.querySelectorAll("button, input"));
+    return list.filter(function(el){
+      if(el.disabled) return false;
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  }
+
+  function moveFocus(dir){
+    var cur = document.activeElement;
+    var all = focusables();
+    if(!cur || all.indexOf(cur) === -1){ if(all[0]) all[0].focus(); return; }
+    var cr = cur.getBoundingClientRect();
+    var cx = cr.left + cr.width/2, cy = cr.top + cr.height/2;
+    var best = null, bestScore = Infinity;
+    all.forEach(function(el){
+      if(el === cur) return;
+      var r = el.getBoundingClientRect();
+      var x = r.left + r.width/2, y = r.top + r.height/2;
+      var dx = x - cx, dy = y - cy;
+      var ok = (dir === "up" && dy < -4) || (dir === "down" && dy > 4) ||
+               (dir === "left" && dx < -4) || (dir === "right" && dx > 4);
+      if(!ok) return;
+      var main = (dir === "up" || dir === "down") ? Math.abs(dy) : Math.abs(dx);
+      var cross = (dir === "up" || dir === "down") ? Math.abs(dx) : Math.abs(dy);
+      var score = main + cross * 2.5;
+      if(score < bestScore){ bestScore = score; best = el; }
+    });
+    if(best){
+      best.focus({preventScroll:true});
+      best.scrollIntoView({block:"center", inline:"nearest"});
+    }
+  }
+
+  document.addEventListener("keydown", function(e){
+    if(e.key === "Escape" && activeModal){ e.preventDefault(); closeModal(); return; }
+    var map = { ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right" };
+    var dir = map[e.key];
+    if(!dir) return;
+    var el = document.activeElement;
+    var isText = el && el.tagName === "INPUT";
+    // داخل خانة الكتابة: الأسهم يمين/شمال تفضل لتحريك المؤشر لو فيه نص
+    if(isText && (dir === "left" || dir === "right") && el.value.length > 0) return;
+    e.preventDefault();
+    moveFocus(dir);
+  });
+
   /* ---------- init ---------- */
   render();
+  (function(){
+    var first = document.querySelector("button, input");
+    if(first) first.focus({preventScroll:true});
+  })();
+
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("sw.js").catch(function(e){ console.error("SW", e); });
+    });
+  }
 
 })();
 </script>
